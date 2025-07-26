@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  const { question, answer } = req.body;
+  const { question = "Заглушка", answer } = req.body;
 
   const completion = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -12,8 +12,7 @@ export default async function handler(req, res) {
       messages: [
         {
           role: "system",
-          content:
-            "Ты эксперт по подготовке авиадиспетчеров. Оцени ответ пользователя по шкале: 1.0 — демонстрирует знание, 0.75 — почти полный ответ, 0.5 — частично, 0.0 — не демонстрирует.",
+          content: "Ты эксперт по подготовке авиадиспетчеров. Оцени ответ пользователя по шкале: 1.0 — демонстрирует знание, 0.75 — почти полный ответ, 0.5 — частично, 0.0 — не демонстрирует.",
         },
         {
           role: "user",
@@ -24,14 +23,14 @@ export default async function handler(req, res) {
   });
 
   const data = await completion.json();
-  const text = data.choices?.[0]?.message?.content || "Ошибка оценки";
+  const content = data.choices?.[0]?.message?.content || "Ошибка";
 
-  // Разбиваем текст по первому дефису
-  const [score, ...rest] = text.split("—");
-  const feedback = rest.join("—").trim();
+  // Парсим оценку и комментарий (например: "Оценка: 1.0\nКомментарий: хороший ответ.")
+  const scoreMatch = content.match(/([01](?:\.0|\.25|\.5|\.75)?)/);
+  const feedbackMatch = content.replace(scoreMatch?.[0], '').trim();
 
   res.status(200).json({
-    score: score.trim(),
-    feedback,
+    score: scoreMatch ? parseFloat(scoreMatch[0]) : null,
+    feedback: feedbackMatch || "Нет комментария",
   });
 }
