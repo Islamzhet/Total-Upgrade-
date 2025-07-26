@@ -1,76 +1,71 @@
-"use client";
-
-import { useState } from "react";
+import { useState } from 'react';
 
 export default function Home() {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState("");
+  const [question, setQuestion] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [evaluation, setEvaluation] = useState('');
   const [history, setHistory] = useState([]);
 
   const generateQuestion = async () => {
-    const res = await fetch("/api/generate-question");
+    const res = await fetch('/api/generate-question');
     const data = await res.json();
-    setQuestion(data.question.trim());
-    setAnswer("");
-    setResult("");
+    setQuestion(data.question);
+    setAnswer('');
+    setEvaluation('');
   };
 
   const evaluateAnswer = async () => {
-    const res = await fetch("/api/evaluate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ question, answer }),
+    const res = await fetch('/api/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, answer })
     });
-
     const data = await res.json();
-    setResult(data.result);
-    setHistory([{ question, answer, result: data.result }, ...history]);
+    setEvaluation(data.evaluation);
+    setHistory([{ question, answer, evaluation }, ...history]);
   };
 
   return (
-    <main style={{ padding: "20px", maxWidth: "600px", margin: "auto" }}>
-      <h1>Upgrade Your Knowledge</h1>
+    <div style={{ maxWidth: 800, margin: 'auto', padding: 20, fontFamily: 'Arial' }}>
+      <h1 style={{ fontSize: 32, fontWeight: 'bold' }}>Upgrade Your Knowledge</h1>
       <button onClick={generateQuestion}>Сгенерировать вопрос</button>
 
-      <div style={{ marginTop: "20px" }}>
-        <strong>Вопрос:</strong>
-        <div style={{ margin: "8px 0", background: "#f5f5f5", padding: "10px" }}>
-          {question || "Нажмите кнопку для генерации вопроса"}
-        </div>
+      {question && (
+        <div style={{ marginTop: 20 }}>
+          <h3>Вопрос:</h3>
+          <div style={{ background: '#f9f9f9', padding: 10 }}>{question}</div>
 
-        <label>
-          Ответ на вопрос:
+          <label style={{ display: 'block', marginTop: 10 }}>Ответ на вопрос:</label>
           <input
-            type="text"
             value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            style={{ width: "100%", marginTop: "8px", padding: "6px" }}
+            onChange={e => setAnswer(e.target.value)}
+            style={{ width: '100%', padding: 10 }}
           />
-        </label>
 
-        <button onClick={evaluateAnswer} style={{ marginTop: "10px" }}>
-          Оценить
-        </button>
+          <button onClick={evaluateAnswer} style={{ marginTop: 10 }}>
+            Оценить
+          </button>
 
-        <div style={{ marginTop: "20px" }}>
-          <strong>Оценка:</strong> {result}
+          {evaluation && (
+            <div style={{ marginTop: 10 }}>
+              <strong>Оценка:</strong> {evaluation}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
-      <div style={{ marginTop: "40px" }}>
-        <h3>Последние ответы:</h3>
-        {history.map((item, idx) => (
-          <div key={idx} style={{ marginBottom: "20px" }}>
-            <div><strong>Вопрос:</strong> {item.question}</div>
-            <div><strong>Ответ:</strong> {item.answer}</div>
-            <div><strong>Оценка:</strong> {item.result}</div>
-            <hr />
-          </div>
-        ))}
-      </div>
-    </main>
+      {history.length > 0 && (
+        <div style={{ marginTop: 40 }}>
+          <h2>Последние ответы:</h2>
+          {history.map((item, i) => (
+            <div key={i} style={{ marginBottom: 20, borderTop: '1px solid #ccc', paddingTop: 10 }}>
+              <p><strong>Вопрос:</strong> {item.question}</p>
+              <p><strong>Ответ:</strong> {item.answer}</p>
+              <p><strong>Оценка:</strong> {item.evaluation}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
