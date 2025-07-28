@@ -58,7 +58,7 @@ export default function Home() {
         <div style={{ marginTop: 40 }}>
           <h2>Последние ответы:</h2>
           {history.map((item, i) => (
-            <div key={i} className="history-entry"> }}>
+            <div key={i} className="history-entry">
               <p><strong>Вопрос:</strong> {item.question}</p>
               <p><strong>Ответ:</strong> {item.answer}</p>
               <p><strong>Оценка:</strong> {item.evaluation}</p>
