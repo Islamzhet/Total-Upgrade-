@@ -15,15 +15,15 @@ export default function Home() {
   };
 
   const evaluateAnswer = async () => {
-    const res = await fetch('/api/evaluate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, answer })
-    });
-    const data = await res.json();
-    setEvaluation(data.evaluation);
-    setHistory([{ question, answer, evaluation }, ...history]);
-  };
+  const res = await fetch('/api/evaluate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, answer })
+  });
+  const data = await res.json();
+  setEvaluation(data.evaluation);
+  setHistory([{ question, answer, evaluation: data.evaluation }, ...history]);
+};
 
   return (
     <div style={{ maxWidth: 800, margin: 'auto', padding: 20, fontFamily: 'Arial' }}>
