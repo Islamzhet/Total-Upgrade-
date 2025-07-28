@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [evaluation, setEvaluation] = useState('');
   const [history, setHistory] = useState([]);
+  const [timeSpent, setTimeSpent] = useState(0);
+  const [timer, setTimer] = useState(null);
 
   const generateQuestion = async () => {
     const res = await fetch('/api/generate-question');
@@ -12,18 +14,25 @@ export default function Home() {
     setQuestion(data.question);
     setAnswer('');
     setEvaluation('');
+    setTimeSpent(0);
+    if (timer) clearInterval(timer);
+    const newTimer = setInterval(() => {
+      setTimeSpent(prev => prev + 1);
+    }, 1000);
+    setTimer(newTimer);
   };
 
   const evaluateAnswer = async () => {
-  const res = await fetch('/api/evaluate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, answer })
-  });
-  const data = await res.json();
-  setEvaluation(data.evaluation);
-  setHistory([{ question, answer, evaluation: data.evaluation }, ...history]);
-};
+    if (timer) clearInterval(timer);
+    const res = await fetch('/api/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, answer })
+    });
+    const data = await res.json();
+    setEvaluation(data.evaluation);
+    setHistory([{ question, answer, evaluation: data.evaluation, timeSpent }, ...history]);
+  };
 
   return (
     <div style={{ maxWidth: 800, margin: 'auto', padding: 20, fontFamily: 'Arial' }}>
@@ -34,6 +43,10 @@ export default function Home() {
         <div style={{ marginTop: 20 }}>
           <h3>Вопрос:</h3>
           <div className="question-box">{question}</div>
+
+          <div style={{ marginTop: 10, fontStyle: 'italic' }}>
+            Время: {timeSpent} сек
+          </div>
 
           <label style={{ display: 'block', marginTop: 10 }}>Ответ на вопрос:</label>
           <input
@@ -62,73 +75,74 @@ export default function Home() {
               <p><strong>Вопрос:</strong> {item.question}</p>
               <p><strong>Ответ:</strong> {item.answer}</p>
               <p><strong>Оценка:</strong> {item.evaluation}</p>
+              <p><em>Время:</em> {item.timeSpent} сек</p>
             </div>
           ))}
         </div>
       )}
-<style jsx>{`
-  h1 {
-    font-size: 36px;
-    font-weight: bold;
-    margin-bottom: 20px;
-    text-align: center;
-  }
 
-  button {
-    background-color: #1a73e8;
-    color: white;
-    padding: 10px 16px;
-    border: none;
-    border-radius: 6px;
-    font-weight: bold;
-    cursor: pointer;
-    margin-top: 10px;
-  }
+      <style jsx>{`
+        h1 {
+          font-size: 36px;
+          font-weight: bold;
+          margin-bottom: 20px;
+          text-align: center;
+        }
 
-  button:hover {
-    background-color: #1558c0;
-  }
+        button {
+          background-color: #1a73e8;
+          color: white;
+          padding: 10px 16px;
+          border: none;
+          border-radius: 6px;
+          font-weight: bold;
+          cursor: pointer;
+          margin-top: 10px;
+        }
 
-  input {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    margin-top: 4px;
-    margin-bottom: 12px;
-  }
+        button:hover {
+          background-color: #1558c0;
+        }
 
-  .question-box {
-    background-color: #f1f5f9;
-    padding: 16px;
-    border-radius: 8px;
-    margin-top: 10px;
-    font-size: 16px;
-  }
+        input {
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #ccc;
+          border-radius: 6px;
+          margin-top: 4px;
+          margin-bottom: 12px;
+        }
 
-  .section {
-    margin-top: 24px;
-  }
+        .question-box {
+          background-color: #f1f5f9;
+          padding: 16px;
+          border-radius: 8px;
+          margin-top: 10px;
+          font-size: 16px;
+        }
 
-  .history-entry {
-    background: white;
-    padding: 16px;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    margin-bottom: 16px;
-  }
+        .section {
+          margin-top: 24px;
+        }
 
-  .label {
-    font-weight: bold;
-    margin-top: 12px;
-    display: block;
-  }
+        .history-entry {
+          background: white;
+          padding: 16px;
+          border-radius: 8px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+          margin-bottom: 16px;
+        }
 
-  strong {
-    color: #111827;
-  }
-`}</style>
+        .label {
+          font-weight: bold;
+          margin-top: 12px;
+          display: block;
+        }
 
+        strong {
+          color: #111827;
+        }
+      `}</style>
     </div>
   );
 }
