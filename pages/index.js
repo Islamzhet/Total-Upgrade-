@@ -33,7 +33,7 @@ export default function Home() {
       {question && (
         <div style={{ marginTop: 20 }}>
           <h3>Вопрос:</h3>
-          <div style={{ background: '#f9f9f9', padding: 10 }}>{question}</div>
+          <div className="question-box">{question}</div>
 
           <label style={{ display: 'block', marginTop: 10 }}>Ответ на вопрос:</label>
           <input
@@ -58,7 +58,7 @@ export default function Home() {
         <div style={{ marginTop: 40 }}>
           <h2>Последние ответы:</h2>
           {history.map((item, i) => (
-            <div key={i} style={{ marginBottom: 20, borderTop: '1px solid #ccc', paddingTop: 10 }}>
+            <div key={i} className="history-entry"> }}>
               <p><strong>Вопрос:</strong> {item.question}</p>
               <p><strong>Ответ:</strong> {item.answer}</p>
               <p><strong>Оценка:</strong> {item.evaluation}</p>
@@ -66,6 +66,69 @@ export default function Home() {
           ))}
         </div>
       )}
+<style jsx>{`
+  h1 {
+    font-size: 36px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+
+  button {
+    background-color: #1a73e8;
+    color: white;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+
+  button:hover {
+    background-color: #1558c0;
+  }
+
+  input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    margin-top: 4px;
+    margin-bottom: 12px;
+  }
+
+  .question-box {
+    background-color: #f1f5f9;
+    padding: 16px;
+    border-radius: 8px;
+    margin-top: 10px;
+    font-size: 16px;
+  }
+
+  .section {
+    margin-top: 24px;
+  }
+
+  .history-entry {
+    background: white;
+    padding: 16px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 16px;
+  }
+
+  .label {
+    font-weight: bold;
+    margin-top: 12px;
+    display: block;
+  }
+
+  strong {
+    color: #111827;
+  }
+`}</style>
+
     </div>
   );
 }
