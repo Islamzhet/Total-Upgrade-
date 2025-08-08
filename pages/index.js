@@ -9,7 +9,7 @@ const RATING_TREE = {
 
 // ===== РОЛИ =====
 const ROLES = [
-  { value: "trainee", label: "Диспетчер‑стажёр" },
+  { value: "trainee", label: "Диспетчер-стажёр" },
   { value: "controller", label: "Диспетчер" },
   { value: "instructor", label: "Инструктор" },
   { value: "krs", label: "КРС" },
@@ -18,7 +18,7 @@ const ROLES = [
 // ===== ХЕЛПЕРЫ =====
 function labelRole(value) {
   const map = {
-    trainee: "Диспетчер‑стажёр",
+    trainee: "Диспетчер-стажёр",
     controller: "Диспетчер",
     instructor: "Инструктор",
     krs: "КРС",
@@ -59,10 +59,8 @@ function difficultyPercent(d) {
   if (d === "hard") return 100;
   return 66;
 }
-
-// ==== агрегаторы для отчёта ====
-function avg(arr) { return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
-function pct(n, d) { return d ? Math.round((n/d)*100) : 0; }
+const avg = (arr) => (arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0);
+const pct = (n,d) => (d ? Math.round((n/d)*100) : 0);
 
 // ===== КОМПОНЕНТ =====
 export default function Home() {
@@ -80,18 +78,18 @@ export default function Home() {
   // Вопрос/ответ/сложность/тема
   const [question, setQuestion] = useState("");
   const [difficulty, setDifficulty] = useState("medium");
-  const [topic, setTopic] = useState("Общее"); // НОВОЕ: тема вопроса (приходит из API)
+  const [topic, setTopic] = useState("Общее");
   const [answer, setAnswer] = useState("");
 
   // Оценка и пояснения
-  const [score, setScore] = useState(null);          // число 0..1
-  const [feedback, setFeedback] = useState("");      // комментарий
-  const [canonical, setCanonical] = useState("");    // правильный ответ (из документов)
-  const [matchedAs, setMatchedAs] = useState("");    // как распознан ответ пользователя
+  const [score, setScore] = useState(null);
+  const [feedback, setFeedback] = useState("");
+  const [canonical, setCanonical] = useState("");
+  const [matchedAs, setMatchedAs] = useState("");
 
   // Управление вопросом
-  const [qIndex, setQIndex] = useState(0);           // 0..TOTAL_QUESTIONS-1
-  const [evaluated, setEvaluated] = useState(false); // НОВОЕ: запретить двойную оценку
+  const [qIndex, setQIndex] = useState(0);           // 0..19
+  const [evaluated, setEvaluated] = useState(false); // запрет двойной оценки
 
   // Таймер
   const [elapsed, setElapsed] = useState(0);
@@ -99,7 +97,7 @@ export default function Home() {
   const timerRef = useRef(null);
 
   // История
-  const [history, setHistory] = useState([]); // элементы: {question, topic, score,...}
+  const [history, setHistory] = useState([]);
 
   // Секундомер
   useEffect(() => {
@@ -126,119 +124,64 @@ export default function Home() {
 
   // ==== Поток ====
   const startTesting = () => setStep("ratings");
-  const proceedToRole = () => {
-    if (selected.size === 0) return;
-    setStep("role");
-  };
+  const proceedToRole = () => { if (selected.size) setStep("role"); };
   const chooseRole = (r) => {
     setRole(r);
-    // начинаем с первого вопроса
     setQIndex(0);
     getQuestion(r, Array.from(selected), 0);
   };
 
   // ==== API: Генерация вопроса ====
   async function getQuestion(roleValue, ratingsArray, index) {
-    // если достигли лимита — финальный отчёт
     if (index >= TOTAL_QUESTIONS) {
       setStep("summary");
       setRunning(false);
       return;
     }
-
-    // обнуления
-    setQuestion("");
-    setAnswer("");
-    setScore(null);
-    setFeedback("");
-    setCanonical("");
-    setMatchedAs("");
-    setEvaluated(false);
-    setElapsed(0);
-    setRunning(false);
+    setQuestion(""); setAnswer("");
+    setScore(null); setFeedback(""); setCanonical(""); setMatchedAs("");
+    setEvaluated(false); setElapsed(0); setRunning(false);
 
     const res = await fetch("/api/generate-question", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        role: roleValue,
-        ratings: ratingsArray,
-        index,                 // передаём номер запроса (может пригодиться бэкенду)
-        total: TOTAL_QUESTIONS // чтобы сервер мог распределять темы/сложности
-      }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: roleValue, ratings: ratingsArray, index, total: TOTAL_QUESTIONS })
     });
     const data = await res.json();
 
     setQuestion(data.question || "Не удалось сгенерировать вопрос.");
     setDifficulty((data.difficulty || "medium").toLowerCase());
-    setTopic(data.topic || "Общее"); // <- важно для итогового отчёта
-    setElapsed(0);
-    setRunning(true);
-    setStep("question");
+    setTopic(data.topic || "Общее");
+    setElapsed(0); setRunning(true); setStep("question");
   }
 
   // ==== API: Оценка ====
   const sendForEvaluation = async () => {
-    if (!answer.trim() || evaluated) return; // НОВОЕ: запрет повтора
+    if (!answer.trim() || evaluated) return;
     setRunning(false);
 
     const res = await fetch("/api/evaluate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question,
-        answer,
-        topic,     // передаём тему — сервер может учесть в фидбеке
-        role,
-        ratings: Array.from(selected),
-      }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, answer, topic, role, ratings: Array.from(selected) })
     });
     const data = await res.json();
 
-    // Нормализация формата
-    let s = null;
-    if (typeof data.score === "number") {
-      s = data.score;
-    } else {
-      const raw = String(data.evaluation ?? data.result ?? "").trim();
-      const m = raw.match(/\b(?:1(?:\.0+)?|0(?:\.\d+)?|\.\d+)\b/);
-      if (m) s = Number(m[0]);
-    }
-    if (s == null || Number.isNaN(s)) s = 0;
+    let s = typeof data.score === "number" ? data.score : 0;
+    const fb = String(data.feedback ?? "").trim();
+    const can = String(data.canonicalAnswer ?? "").trim();
+    const ma  = String(data.matchedAs ?? "").trim();
 
-    const fb = String(data.feedback ?? data.comment ?? "").trim();
-    const can = String(data.canonicalAnswer ?? data.canonical ?? "").trim();
-    const ma  = String(data.matchedAs ?? data.normalizedAnswer ?? "").trim();
+    setScore(s); setFeedback(fb); setCanonical(can); setMatchedAs(ma);
+    setEvaluated(true);
 
-    setScore(s);
-    setFeedback(fb);
-    setCanonical(can);     // показываем канон как есть (без пересказов)
-    setMatchedAs(ma);
-    setEvaluated(true);    // НОВОЕ: отмечаем, что оценено
-
-    // Запись в историю
-    setHistory((prev) => [
-      {
-        ts: Date.now(),
-        role,
-        ratings: Array.from(selected),
-        question,
-        topic,
-        answer,
-        score: s,
-        feedback: fb,
-        canonical: can,
-        matchedAs: ma,
-        difficulty,
-        time: elapsed,
-        index: qIndex,
-      },
-      ...prev,
-    ]);
+    setHistory(prev => [{
+      ts: Date.now(), role, ratings: Array.from(selected),
+      question, topic, answer, score: s, feedback: fb,
+      canonical: can, matchedAs: ma, difficulty, time: elapsed, index: qIndex
+    }, ...prev]);
   };
 
   const nextQuestion = () => {
-    if (!evaluated) return; // НОВОЕ: нельзя переходить без оценки
+    if (!evaluated) return; // нельзя без оценки
     const next = qIndex + 1;
     setQIndex(next);
     getQuestion(role, Array.from(selected), next);
@@ -256,9 +199,8 @@ export default function Home() {
     }, {});
     const topicRows = Object.entries(byTopic)
       .map(([t, arr]) => ({ t, avg: avg(arr), n: arr.length }))
-      .sort((a,b)=>a.avg-b.avg); // слабые сверху
+      .sort((a,b)=>a.avg-b.avg);
 
-    // краткий текстовый фидбек
     const weak = topicRows.filter(r => r.avg < 0.6).slice(0,3);
     const feedbackText = weak.length
       ? `Обрати внимание на темы: ${weak.map(w=>`${w.t} (ср. ${w.avg.toFixed(2)})`).join("; ")}.`
@@ -306,17 +248,10 @@ export default function Home() {
         <div className="controls" style={{marginTop:12}}>
           <button className="primary" onClick={()=>{
             // начать заново
-            setHistory([]);
-            setQIndex(0);
-            setStep("welcome");
-            setSelected(new Set());
-            setRole(null);
-            setQuestion("");
-            setAnswer("");
-            setScore(null);
-            setFeedback("");
-            setCanonical("");
-            setMatchedAs("");
+            setHistory([]); setQIndex(0); setStep("welcome");
+            setSelected(new Set()); setRole(null);
+            setQuestion(""); setAnswer("");
+            setScore(null); setFeedback(""); setCanonical(""); setMatchedAs("");
             setTopic("Общее");
           }}>
             Начать заново
@@ -345,9 +280,7 @@ export default function Home() {
           <div className="card center">
             <h1>Привет! Давай пройдём тест.</h1>
             <p>Для начала укажи свои рейтинги.</p>
-            <button className="primary" onClick={startTesting}>
-              Тестирование
-            </button>
+            <button className="primary" onClick={startTesting}>Тестирование</button>
           </div>
         )}
 
@@ -423,16 +356,10 @@ export default function Home() {
               <div className="timerNote">Секундомер запущен</div>
             </div>
 
-            {/* Индикатор сложности — градиентная плашка */}
             <div className="diffBar">
-              <div
-                className={`diffFill ${difficulty}`}
-                style={{ width: `${difficultyPercent(difficulty)}%` }}
-              />
+              <div className={`diffFill ${difficulty}`} style={{ width: `${difficultyPercent(difficulty)}%` }} />
               <div className="diffLabels">
-                <span>Easy</span>
-                <span>Medium</span>
-                <span>Hard</span>
+                <span>Easy</span><span>Medium</span><span>Hard</span>
               </div>
             </div>
 
@@ -445,7 +372,7 @@ export default function Home() {
               onChange={(e) => setAnswer(e.target.value)}
               placeholder="Введите ваш ответ…"
               onKeyDown={(e) => e.key === "Enter" && sendForEvaluation()}
-              readOnly={evaluated} // НОВОЕ: блокируем после оценки
+              readOnly={evaluated}
             />
 
             <div className="controls">
@@ -457,7 +384,6 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Блок результата */}
             {score !== null && (
               <div className={`evaluation eval-${verdictClass(score)}`}>
                 <div className="scoreRow">
@@ -465,13 +391,9 @@ export default function Home() {
                   <span className="scoreText">{verdictLabel(score)}</span>
                 </div>
                 {feedback && <div className="feedback">{feedback}</div>}
-
-                {/* Показываем КАНОНИЧЕСКИЙ ответ без вольных пересказов */}
                 {(canonical || matchedAs) && (
                   <div className="canonical">
-                    {canonical && (
-                      <div><b>Правильный ответ (канон):</b> {canonical}</div>
-                    )}
+                    {canonical && <div><b>Правильный ответ (канон):</b> {canonical}</div>}
                     {matchedAs && matchedAs !== answer && (
                       <div className="muted">Ваш ответ распознан как: {matchedAs}</div>
                     )}
@@ -494,9 +416,7 @@ export default function Home() {
                   <span className={`chip diff ${h.difficulty}`}>{ruDifficulty(h.difficulty)}</span>
                   <span className="chip">{h.ratings.length} рейтингов</span>
                   <span className="chip">Тема: {h.topic || "Общее"}</span>
-                  <span className="chip small eval-${verdictClass(h.score)}`}>
-                    {Number(h.score).toFixed(2)}
-                  </span>
+                  <span className={`chip small eval-${verdictClass(h.score)}`}>{Number(h.score).toFixed(2)}</span>
                   <span className="time">⏱ {formatSecs(h.time)}</span>
                 </div>
                 <p><b>Вопрос:</b> {h.question}</p>
@@ -613,30 +533,15 @@ export default function Home() {
         .diffFill.medium{ box-shadow: inset 0 0 12px rgba(245,158,11,.35); }
         .diffFill.hard{   box-shadow: inset 0 0 12px rgba(239,68,68,.35); }
 
-        .diffLabels{
-          display: flex; justify-content: space-between;
-          font-size: 11px; color:#cbd5e1; margin-top:4px;
-        }
+        .diffLabels{ display: flex; justify-content: space-between; font-size: 11px; color:#cbd5e1; margin-top:4px; }
 
-        .questionBox{
-          background: rgba(15,23,42,.5);
-          border: 1px solid rgba(255,255,255,.12);
-          border-radius: 14px;
-          padding: 14px; margin: 10px 0 8px 0;
-        }
+        .questionBox{ background: rgba(15,23,42,.5); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 14px; margin: 10px 0 8px 0; }
 
         .label{ font-weight:700; margin-top:6px; margin-bottom:6px; }
-        input{
-          width:100%; border:1px solid rgba(255,255,255,.18);
-          border-radius:12px; padding:12px 14px; background: rgba(255,255,255,.08);
-          color:#e5e7eb; outline:none;
-        }
+        input{ width:100%; border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:12px 14px; background: rgba(255,255,255,.08); color:#e5e7eb; outline:none; }
         .controls{ display:flex; gap:10px; margin-top:10px; }
 
-        .evaluation{
-          margin-top:12px; border-radius:12px; padding:10px 12px;
-          border:1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.08);
-        }
+        .evaluation{ margin-top:12px; border-radius:12px; padding:10px 12px; border:1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.08); }
         .scoreRow{ display:flex; gap:8px; align-items:center; }
         .scoreNum{ font-weight:800; font-variant-numeric: tabular-nums; }
         .scoreText{ opacity:.9; }
@@ -644,7 +549,6 @@ export default function Home() {
         .canonical{ margin-top:6px; }
         .muted{ color:#94a3b8; }
 
-        /* цветовые состояния оценки */
         .eval-ok  { border-color:#22c55e88; background:#22c55e1a; }
         .eval-good{ border-color:#84cc16aa; background:#84cc161a; }
         .eval-mid { border-color:#f59e0baa; background:#f59e0b1a; }
@@ -652,20 +556,12 @@ export default function Home() {
         .eval-bad { border-color:#ef4444aa; background:#ef44441a; }
 
         .history{ margin-top:16px; }
-        .histItem{
-          background: rgba(255,255,255,.05);
-          border:1px solid rgba(255,255,255,.12);
-          border-radius: 14px; padding:12px; margin-bottom:10px;
-        }
+        .histItem{ background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); border-radius: 14px; padding:12px; margin-bottom:10px; }
         .row{ display:flex; align-items:center; gap:8px; }
         .time{ margin-left:auto; font-variant-numeric: tabular-nums; color:#cbd5e1; }
         .hint{ color:#cbd5e1; font-size:13px; margin: -4px 0 10px; }
 
-        /* summary */
-        .summaryGrid{
-          display:grid; grid-template-columns: repeat(2, minmax(0,1fr));
-          gap:10px; margin-top:8px;
-        }
+        .summaryGrid{ display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; margin-top:8px; }
         .sumBox{ background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px; }
         .sumLabel{ color:#cbd5e1; font-size:12px; }
         .sumValue{ font-size:18px; font-weight:800; }
