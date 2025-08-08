@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-// Ветки рейтингов
+// ===== РЕЙТИНГИ (ветки) =====
 const RATING_TREE = {
   Control: ["A1C", "A2C", "A3C", "A4C"],
   Approach: ["Approach", "Radar"],
   Aerodrome: ["Tower", "Delivery", "Ground"],
 };
 
-// Должность (внутренний код → подпись)
+// ===== РОЛИ =====
 const ROLES = [
   { value: "trainee", label: "Диспетчер‑стажёр" },
   { value: "controller", label: "Диспетчер" },
@@ -15,20 +15,68 @@ const ROLES = [
   { value: "krs", label: "КРС" },
 ];
 
+// ===== ХЕЛПЕРЫ =====
+function labelRole(value) {
+  const map = {
+    trainee: "Диспетчер‑стажёр",
+    controller: "Диспетчер",
+    instructor: "Инструктор",
+    krs: "КРС",
+  };
+  return map[value] || value;
+}
+function formatSecs(s) {
+  const m = Math.floor(s / 60).toString().padStart(2, "0");
+  const ss = (s % 60).toString().padStart(2, "0");
+  return `${m}:${ss}`;
+}
+function verdictLabel(v) {
+  const n = Number(v);
+  if (n >= 1) return "Полный ответ";
+  if (n >= 0.75) return "Почти полный";
+  if (n >= 0.5) return "Частичный";
+  if (n > 0) return "Слабый";
+  return "Не по сути";
+}
+function verdictClass(v) {
+  const n = Number(v);
+  if (n >= 1) return "ok";
+  if (n >= 0.75) return "good";
+  if (n >= 0.5) return "mid";
+  if (n > 0) return "low";
+  return "bad";
+}
+function ruDifficulty(d) {
+  if (d === "easy") return "Лёгкий";
+  if (d === "medium") return "Средний";
+  if (d === "hard") return "Сложный";
+  return d || "Средний";
+}
+function difficultyPercent(d) {
+  if (d === "easy") return 33;
+  if (d === "medium") return 66;
+  if (d === "hard") return 100;
+  return 66;
+}
+
+// ===== КОМПОНЕНТ =====
 export default function Home() {
   // Шаги: welcome → ratings → role → question
   const [step, setStep] = useState("welcome");
 
-  // Рейтинги: храним выбранные как набор строк (например: "Control/A1C")
+  // Рейтинги (Set строк "Control/A1C")
   const [selected, setSelected] = useState(new Set());
 
   // Роль
   const [role, setRole] = useState(null);
 
-  // Q/A + секундомер
+  // Вопрос/ответ/оценка/сложность
   const [question, setQuestion] = useState("");
+  const [difficulty, setDifficulty] = useState("medium"); // приходит из API
   const [answer, setAnswer] = useState("");
-  const [evaluation, setEvaluation] = useState("");
+  const [evaluation, setEvaluation] = useState(""); // "0" | "0.5" | "0.75" | "1.0"
+
+  // Таймер
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
   const timerRef = useRef(null);
@@ -36,12 +84,13 @@ export default function Home() {
   // История
   const [history, setHistory] = useState([]);
 
-  // секундомер
+  // Секундомер
   useEffect(() => {
-    if (running) timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
+    if (running) timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => timerRef.current && clearInterval(timerRef.current);
   }, [running]);
 
+  // ==== Рейтинги ====
   const toggleLeaf = (cat, leaf) => {
     const key = `${cat}/${leaf}`;
     const next = new Set(selected);
@@ -49,38 +98,31 @@ export default function Home() {
     else next.add(key);
     setSelected(next);
   };
-
   const toggleCategoryAll = (cat) => {
     const leaves = RATING_TREE[cat];
     const next = new Set(selected);
-    const allSelected = leaves.every(l => next.has(`${cat}/${l}`));
-    if (allSelected) {
-      // снять все
-      leaves.forEach(l => next.delete(`${cat}/${l}`));
-    } else {
-      // выбрать все
-      leaves.forEach(l => next.add(`${cat}/${l}`));
-    }
+    const allSelected = leaves.every((l) => next.has(`${cat}/${l}`));
+    if (allSelected) leaves.forEach((l) => next.delete(`${cat}/${l}`));
+    else leaves.forEach((l) => next.add(`${cat}/${l}`));
     setSelected(next);
   };
 
+  // ==== Поток ====
   const startTesting = () => setStep("ratings");
-
   const proceedToRole = () => {
     if (selected.size === 0) return;
     setStep("role");
   };
-
   const chooseRole = (r) => {
     setRole(r);
-    // сразу генерируем первый вопрос
     generateQuestion(r, Array.from(selected));
   };
 
+  // ==== API: Генерация вопроса ====
   async function generateQuestion(roleValue, ratingsArray) {
     setQuestion("");
-    setEvaluation("");
     setAnswer("");
+    setEvaluation("");
     setElapsed(0);
     setRunning(false);
 
@@ -88,38 +130,42 @@ export default function Home() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        role: roleValue,               // trainee|controller|instructor|krs
-        ratings: ratingsArray,         // ["Control/A1C", "Approach/Radar", ...]
+        role: roleValue,
+        ratings: ratingsArray,
       }),
     });
     const data = await res.json();
 
     setQuestion(data.question || "Не удалось сгенерировать вопрос.");
+    setDifficulty((data.difficulty || "medium").toLowerCase());
     setElapsed(0);
     setRunning(true);
     setStep("question");
   }
 
-  const evaluateAnswer = async () => {
+  // ==== API: Оценка ====
+  const sendForEvaluation = async () => {
     if (!answer.trim()) return;
     setRunning(false);
+
     const res = await fetch("/api/evaluate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question, answer }),
     });
     const data = await res.json();
-    const grade = data.result || data.evaluation || "";
-    setEvaluation(grade);
+    const val = data.evaluation ?? "0";
+    setEvaluation(val);
 
-    setHistory(prev => [
+    setHistory((prev) => [
       {
         ts: Date.now(),
         role,
         ratings: Array.from(selected),
         question,
         answer,
-        evaluation: grade,
+        evaluation: val,
+        difficulty,
         time: elapsed,
       },
       ...prev,
@@ -130,9 +176,9 @@ export default function Home() {
     generateQuestion(role, Array.from(selected));
   };
 
+  // ==== Рендер ====
   return (
     <div className="wrap">
-      {/* Шапка */}
       <header className="header">
         <div className="brand">
           <span className="logo">✈️</span>
@@ -158,12 +204,12 @@ export default function Home() {
         {step === "ratings" && (
           <div className="card">
             <h2>Выбери рейтинги</h2>
-            <p className="hint">Можно выбрать по отдельности или нажать на название ветки, чтобы выбрать всё сразу.</p>
+            <p className="hint">Можно нажать на название ветки, чтобы выбрать/снять все пункты сразу.</p>
 
             <div className="ratings">
-              {Object.keys(RATING_TREE).map(cat => {
+              {Object.keys(RATING_TREE).map((cat) => {
                 const leaves = RATING_TREE[cat];
-                const allSelected = leaves.every(l => selected.has(`${cat}/${l}`));
+                const allSelected = leaves.every((l) => selected.has(`${cat}/${l}`));
                 return (
                   <div key={cat} className="branch">
                     <div
@@ -174,7 +220,7 @@ export default function Home() {
                       {cat} {allSelected ? "✓" : ""}
                     </div>
                     <div className="leaves">
-                      {leaves.map(l => {
+                      {leaves.map((l) => {
                         const k = `${cat}/${l}`;
                         const isOn = selected.has(k);
                         return (
@@ -194,11 +240,7 @@ export default function Home() {
             </div>
 
             <div className="actions">
-              <button
-                className="primary"
-                onClick={proceedToRole}
-                disabled={selected.size === 0}
-              >
+              <button className="primary" onClick={proceedToRole} disabled={selected.size === 0}>
                 Далее
               </button>
             </div>
@@ -207,14 +249,10 @@ export default function Home() {
 
         {step === "role" && (
           <div className="card">
-            <h2>Кто вы по должности?</h2>
+            <h2>Выберите должность</h2>
             <div className="grid">
-              {ROLES.map(r => (
-                <button
-                  key={r.value}
-                  className="tile"
-                  onClick={() => chooseRole(r.value)}
-                >
+              {ROLES.map((r) => (
+                <button key={r.value} className="tile" onClick={() => chooseRole(r.value)}>
                   {r.label}
                 </button>
               ))}
@@ -227,23 +265,38 @@ export default function Home() {
             <div className="metaRow">
               <div className="chips">
                 <span className="chip">{labelRole(role)}</span>
+                <span className={`chip diff ${difficulty}`}>{ruDifficulty(difficulty)}</span>
                 <span className="chip">Рейтингов: {selected.size}</span>
               </div>
               <div className="timerNote">Секундомер запущен</div>
             </div>
 
-            <h3>Вопрос:</h3>
+            {/* Индикатор сложности — градиентная плашка */}
+            <div className="diffBar">
+              <div
+                className={`diffFill ${difficulty}`}
+                style={{ width: `${difficultyPercent(difficulty)}%` }}
+              />
+              <div className="diffLabels">
+                <span>Easy</span>
+                <span>Medium</span>
+                <span>Hard</span>
+              </div>
+            </div>
+
+            <h3>Вопрос</h3>
             <div className="questionBox">{question}</div>
 
-            <label className="label">Ответ:</label>
+            <label className="label">Ответ</label>
             <input
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
               placeholder="Введите ваш ответ…"
+              onKeyDown={(e) => e.key === "Enter" && sendForEvaluation()}
             />
 
             <div className="controls">
-              <button className="primary" onClick={evaluateAnswer}>
+              <button className="primary" onClick={sendForEvaluation}>
                 Оценить
               </button>
               <button className="ghost" onClick={nextQuestion}>
@@ -252,8 +305,11 @@ export default function Home() {
             </div>
 
             {evaluation && (
-              <div className="evaluation">
-                <strong>Оценка:</strong> {evaluation}
+              <div className={`evaluation eval-${verdictClass(evaluation)}`}>
+                <div className="scoreRow">
+                  <span className="scoreNum">{evaluation}</span>
+                  <span className="scoreText">{verdictLabel(evaluation)}</span>
+                </div>
               </div>
             )}
           </div>
@@ -266,12 +322,15 @@ export default function Home() {
               <div key={i} className="histItem">
                 <div className="row">
                   <span className="chip">{labelRole(h.role)}</span>
+                  <span className={`chip diff ${h.difficulty}`}>{ruDifficulty(h.difficulty)}</span>
                   <span className="chip">{h.ratings.length} рейтингов</span>
+                  <span className={`chip small eval-${verdictClass(h.evaluation)}`}>
+                    {h.evaluation}
+                  </span>
                   <span className="time">⏱ {formatSecs(h.time)}</span>
                 </div>
                 <p><b>Вопрос:</b> {h.question}</p>
                 <p><b>Ответ:</b> {h.answer}</p>
-                <p><b>Оценка:</b> {h.evaluation}</p>
               </div>
             ))}
           </section>
@@ -349,7 +408,36 @@ export default function Home() {
           border:1px solid rgba(255,255,255,.2);
           color:#e5e7eb; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800;
         }
+        .chip.diff.easy   { background:#0f766e33; border-color:#0f766e66; color:#99f6e4; }
+        .chip.diff.medium { background:#854d0e33; border-color:#854d0e66; color:#fde68a; }
+        .chip.diff.hard   { background:#991b1b33; border-color:#991b1b66; color:#fecaca; }
+
         .timerNote{ opacity:.8; font-size:12px; }
+
+        .diffBar{
+          position: relative;
+          height: 10px;
+          border-radius: 999px;
+          background: linear-gradient(90deg, #16a34a, #f59e0b, #ef4444);
+          opacity: 0.9;
+          margin: 8px 0 12px;
+          overflow: hidden;
+        }
+        .diffFill{
+          position: absolute; top:0; left:0; bottom:0;
+          background: rgba(255,255,255,.85);
+          mix-blend-mode: overlay;
+          border-right: 2px solid rgba(255,255,255,.9);
+          transition: width .25s ease;
+        }
+        .diffFill.easy{   box-shadow: inset 0 0 12px rgba(22,163,74,.35); }
+        .diffFill.medium{ box-shadow: inset 0 0 12px rgba(245,158,11,.35); }
+        .diffFill.hard{   box-shadow: inset 0 0 12px rgba(239,68,68,.35); }
+
+        .diffLabels{
+          display: flex; justify-content: space-between;
+          font-size: 11px; color:#cbd5e1; margin-top:4px;
+        }
 
         .questionBox{
           background: rgba(15,23,42,.5);
@@ -365,6 +453,19 @@ export default function Home() {
           color:#e5e7eb; outline:none;
         }
         .controls{ display:flex; gap:10px; margin-top:10px; }
+        .evaluation{
+          margin-top:12px; border-radius:12px; padding:10px 12px;
+          border:1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.08);
+        }
+        .scoreRow{ display:flex; gap:8px; align-items:center; }
+        .scoreNum{ font-weight:800; font-variant-numeric: tabular-nums; }
+        .scoreText{ opacity:.9; }
+
+        .eval-ok  { border-color:#22c55e88; background:#22c55e1a; }
+        .eval-good{ border-color:#84cc16aa; background:#84cc161a; }
+        .eval-mid { border-color:#f59e0baa; background:#f59e0b1a; }
+        .eval-low { border-color:#f97316aa; background:#f973161a; }
+        .eval-bad { border-color:#ef4444aa; background:#ef44441a; }
 
         .history{ margin-top:16px; }
         .histItem{
@@ -379,19 +480,4 @@ export default function Home() {
       `}</style>
     </div>
   );
-}
-
-function labelRole(value) {
-  const map = {
-    trainee: "Диспетчер‑стажёр",
-    controller: "Диспетчер",
-    instructor: "Инструктор",
-    krs: "КРС",
-  };
-  return map[value] || value;
-}
-function formatSecs(s) {
-  const m = Math.floor(s / 60).toString().padStart(2, "0");
-  const ss = (s % 60).toString().padStart(2, "0");
-  return `${m}:${ss}`;
 }
