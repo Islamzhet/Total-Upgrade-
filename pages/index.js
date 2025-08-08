@@ -32,7 +32,6 @@ function formatSecs(s) {
 }
 function verdictLabel(v) {
   const n = Number(v);
-  // тоньше шкала, чтобы 1.0 = зелёный, 0.75.. = лайм, 0.5.. = жёлтый, 0.25.. = оранжевый, <0.25 = красный
   if (n >= 0.90) return "Отлично";
   if (n >= 0.75) return "Почти идеально";
   if (n >= 0.50) return "В целом верно";
@@ -42,11 +41,11 @@ function verdictLabel(v) {
 }
 function verdictClass(v) {
   const n = Number(v);
-  if (n >= 0.90) return "ok";     // зелёный
-  if (n >= 0.75) return "good";   // лайм
-  if (n >= 0.50) return "mid";    // жёлтый
-  if (n >= 0.25) return "low";    // оранжевый
-  return "bad";                   // красный
+  if (n >= 0.90) return "ok";
+  if (n >= 0.75) return "good";
+  if (n >= 0.50) return "mid";
+  if (n >= 0.25) return "low";
+  return "bad";
 }
 function ruDifficulty(d) {
   if (d === "easy") return "Лёгкий";
@@ -61,9 +60,15 @@ function difficultyPercent(d) {
   return 66;
 }
 
+// ==== агрегаторы для отчёта ====
+function avg(arr) { return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
+function pct(n, d) { return d ? Math.round((n/d)*100) : 0; }
+
 // ===== КОМПОНЕНТ =====
 export default function Home() {
-  // Шаги: welcome → ratings → role → question
+  const TOTAL_QUESTIONS = 20;
+
+  // Шаги: welcome → ratings → role → question → summary
   const [step, setStep] = useState("welcome");
 
   // Рейтинги (Set строк "Control/A1C")
@@ -72,16 +77,21 @@ export default function Home() {
   // Роль
   const [role, setRole] = useState(null);
 
-  // Вопрос/ответ/сложность
+  // Вопрос/ответ/сложность/тема
   const [question, setQuestion] = useState("");
-  const [difficulty, setDifficulty] = useState("medium"); // приходит из API
+  const [difficulty, setDifficulty] = useState("medium");
+  const [topic, setTopic] = useState("Общее"); // НОВОЕ: тема вопроса (приходит из API)
   const [answer, setAnswer] = useState("");
 
-  // Оценка и пояснения (НОВОЕ)
+  // Оценка и пояснения
   const [score, setScore] = useState(null);          // число 0..1
-  const [feedback, setFeedback] = useState("");      // короткий комментарий
-  const [canonical, setCanonical] = useState("");    // правильный ответ
+  const [feedback, setFeedback] = useState("");      // комментарий
+  const [canonical, setCanonical] = useState("");    // правильный ответ (из документов)
   const [matchedAs, setMatchedAs] = useState("");    // как распознан ответ пользователя
+
+  // Управление вопросом
+  const [qIndex, setQIndex] = useState(0);           // 0..TOTAL_QUESTIONS-1
+  const [evaluated, setEvaluated] = useState(false); // НОВОЕ: запретить двойную оценку
 
   // Таймер
   const [elapsed, setElapsed] = useState(0);
@@ -89,7 +99,7 @@ export default function Home() {
   const timerRef = useRef(null);
 
   // История
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState([]); // элементы: {question, topic, score,...}
 
   // Секундомер
   useEffect(() => {
@@ -122,18 +132,28 @@ export default function Home() {
   };
   const chooseRole = (r) => {
     setRole(r);
-    generateQuestion(r, Array.from(selected));
+    // начинаем с первого вопроса
+    setQIndex(0);
+    getQuestion(r, Array.from(selected), 0);
   };
 
   // ==== API: Генерация вопроса ====
-  async function generateQuestion(roleValue, ratingsArray) {
+  async function getQuestion(roleValue, ratingsArray, index) {
+    // если достигли лимита — финальный отчёт
+    if (index >= TOTAL_QUESTIONS) {
+      setStep("summary");
+      setRunning(false);
+      return;
+    }
+
+    // обнуления
     setQuestion("");
     setAnswer("");
-    // обнуляем оценку и комментарии
     setScore(null);
     setFeedback("");
     setCanonical("");
     setMatchedAs("");
+    setEvaluated(false);
     setElapsed(0);
     setRunning(false);
 
@@ -143,12 +163,15 @@ export default function Home() {
       body: JSON.stringify({
         role: roleValue,
         ratings: ratingsArray,
+        index,                 // передаём номер запроса (может пригодиться бэкенду)
+        total: TOTAL_QUESTIONS // чтобы сервер мог распределять темы/сложности
       }),
     });
     const data = await res.json();
 
     setQuestion(data.question || "Не удалось сгенерировать вопрос.");
     setDifficulty((data.difficulty || "medium").toLowerCase());
+    setTopic(data.topic || "Общее"); // <- важно для итогового отчёта
     setElapsed(0);
     setRunning(true);
     setStep("question");
@@ -156,20 +179,23 @@ export default function Home() {
 
   // ==== API: Оценка ====
   const sendForEvaluation = async () => {
-    if (!answer.trim()) return;
+    if (!answer.trim() || evaluated) return; // НОВОЕ: запрет повтора
     setRunning(false);
 
     const res = await fetch("/api/evaluate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // достаточно вопроса и ответа; роль/рейтинги при желании можно тоже отправить
-      body: JSON.stringify({ question, answer }),
+      body: JSON.stringify({
+        question,
+        answer,
+        topic,     // передаём тему — сервер может учесть в фидбеке
+        role,
+        ratings: Array.from(selected),
+      }),
     });
-
     const data = await res.json();
 
-    // Нормализуем: поддерживаем и новый формат ({score,feedback,canonicalAnswer,matchedAs}),
-    // и старый ({evaluation: "1.0 …"}), чтобы ничего не ломалось.
+    // Нормализация формата
     let s = null;
     if (typeof data.score === "number") {
       s = data.score;
@@ -180,21 +206,24 @@ export default function Home() {
     }
     if (s == null || Number.isNaN(s)) s = 0;
 
-    const fb = String(data.feedback ?? "").trim();
+    const fb = String(data.feedback ?? data.comment ?? "").trim();
     const can = String(data.canonicalAnswer ?? data.canonical ?? "").trim();
-    const ma  = String(data.matchedAs ?? "").trim();
+    const ma  = String(data.matchedAs ?? data.normalizedAnswer ?? "").trim();
 
     setScore(s);
     setFeedback(fb);
-    setCanonical(can);
+    setCanonical(can);     // показываем канон как есть (без пересказов)
     setMatchedAs(ma);
+    setEvaluated(true);    // НОВОЕ: отмечаем, что оценено
 
+    // Запись в историю
     setHistory((prev) => [
       {
         ts: Date.now(),
         role,
         ratings: Array.from(selected),
         question,
+        topic,
         answer,
         score: s,
         feedback: fb,
@@ -202,13 +231,99 @@ export default function Home() {
         matchedAs: ma,
         difficulty,
         time: elapsed,
+        index: qIndex,
       },
       ...prev,
     ]);
   };
 
   const nextQuestion = () => {
-    generateQuestion(role, Array.from(selected));
+    if (!evaluated) return; // НОВОЕ: нельзя переходить без оценки
+    const next = qIndex + 1;
+    setQIndex(next);
+    getQuestion(role, Array.from(selected), next);
+  };
+
+  // ==== Итоговый отчёт ====
+  const renderSummary = () => {
+    const scores = history.map(h => h.score ?? 0);
+    const avgScore = avg(scores);
+    const passed = history.filter(h => (h.score ?? 0) >= 0.75).length;
+    const byTopic = history.reduce((acc, h) => {
+      const t = h.topic || "Общее";
+      (acc[t] ||= []).push(h.score ?? 0);
+      return acc;
+    }, {});
+    const topicRows = Object.entries(byTopic)
+      .map(([t, arr]) => ({ t, avg: avg(arr), n: arr.length }))
+      .sort((a,b)=>a.avg-b.avg); // слабые сверху
+
+    // краткий текстовый фидбек
+    const weak = topicRows.filter(r => r.avg < 0.6).slice(0,3);
+    const feedbackText = weak.length
+      ? `Обрати внимание на темы: ${weak.map(w=>`${w.t} (ср. ${w.avg.toFixed(2)})`).join("; ")}.`
+      : "Хорошая равномерность знаний по темам.";
+
+    return (
+      <div className="card">
+        <h2>Итоги теста</h2>
+        <p className="hint">Вы прошли {TOTAL_QUESTIONS} вопросов.</p>
+
+        <div className="summaryGrid">
+          <div className="sumBox">
+            <div className="sumLabel">Средний балл</div>
+            <div className="sumValue">{avgScore.toFixed(2)}</div>
+          </div>
+          <div className="sumBox">
+            <div className="sumLabel">Зачтено (≥ 0.75)</div>
+            <div className="sumValue">{passed}/{TOTAL_QUESTIONS} · {pct(passed, TOTAL_QUESTIONS)}%</div>
+          </div>
+          <div className="sumBox">
+            <div className="sumLabel">Должность</div>
+            <div className="sumValue">{labelRole(role)}</div>
+          </div>
+          <div className="sumBox">
+            <div className="sumLabel">Рейтингов</div>
+            <div className="sumValue">{selected.size}</div>
+          </div>
+        </div>
+
+        <h3 style={{marginTop:12}}>Темы</h3>
+        <div className="topicList">
+          {topicRows.map(r => (
+            <div className="topicRow" key={r.t}>
+              <div className="topicName">{r.t}</div>
+              <div className={`topicScore chip small eval-${verdictClass(r.avg)}`}>{r.avg.toFixed(2)}</div>
+              <div className="topicCount">вопросов: {r.n}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="evaluation" style={{marginTop:12}}>
+          <b>Обратная связь:</b> {feedbackText}
+        </div>
+
+        <div className="controls" style={{marginTop:12}}>
+          <button className="primary" onClick={()=>{
+            // начать заново
+            setHistory([]);
+            setQIndex(0);
+            setStep("welcome");
+            setSelected(new Set());
+            setRole(null);
+            setQuestion("");
+            setAnswer("");
+            setScore(null);
+            setFeedback("");
+            setCanonical("");
+            setMatchedAs("");
+            setTopic("Общее");
+          }}>
+            Начать заново
+          </button>
+        </div>
+      </div>
+    );
   };
 
   // ==== Рендер ====
@@ -302,6 +417,8 @@ export default function Home() {
                 <span className="chip">{labelRole(role)}</span>
                 <span className={`chip diff ${difficulty}`}>{ruDifficulty(difficulty)}</span>
                 <span className="chip">Рейтингов: {selected.size}</span>
+                <span className="chip">Тема: {topic}</span>
+                <span className="chip">Вопрос {qIndex + 1}/{TOTAL_QUESTIONS}</span>
               </div>
               <div className="timerNote">Секундомер запущен</div>
             </div>
@@ -328,18 +445,19 @@ export default function Home() {
               onChange={(e) => setAnswer(e.target.value)}
               placeholder="Введите ваш ответ…"
               onKeyDown={(e) => e.key === "Enter" && sendForEvaluation()}
+              readOnly={evaluated} // НОВОЕ: блокируем после оценки
             />
 
             <div className="controls">
-              <button className="primary" onClick={sendForEvaluation}>
+              <button className="primary" onClick={sendForEvaluation} disabled={evaluated || !answer.trim()}>
                 Оценить
               </button>
-              <button className="ghost" onClick={nextQuestion}>
+              <button className="ghost" onClick={nextQuestion} disabled={!evaluated}>
                 Следующий вопрос
               </button>
             </div>
 
-            {/* Блок результата — работает с ЧИСЛОВЫМ score + текстом */}
+            {/* Блок результата */}
             {score !== null && (
               <div className={`evaluation eval-${verdictClass(score)}`}>
                 <div className="scoreRow">
@@ -347,10 +465,12 @@ export default function Home() {
                   <span className="scoreText">{verdictLabel(score)}</span>
                 </div>
                 {feedback && <div className="feedback">{feedback}</div>}
+
+                {/* Показываем КАНОНИЧЕСКИЙ ответ без вольных пересказов */}
                 {(canonical || matchedAs) && (
                   <div className="canonical">
                     {canonical && (
-                      <div><b>Правильный ответ:</b> {canonical}</div>
+                      <div><b>Правильный ответ (канон):</b> {canonical}</div>
                     )}
                     {matchedAs && matchedAs !== answer && (
                       <div className="muted">Ваш ответ распознан как: {matchedAs}</div>
@@ -362,7 +482,9 @@ export default function Home() {
           </div>
         )}
 
-        {history.length > 0 && (
+        {step === "summary" && renderSummary()}
+
+        {history.length > 0 && step !== "summary" && (
           <section className="history">
             <h2>История</h2>
             {history.map((h, i) => (
@@ -371,7 +493,8 @@ export default function Home() {
                   <span className="chip">{labelRole(h.role)}</span>
                   <span className={`chip diff ${h.difficulty}`}>{ruDifficulty(h.difficulty)}</span>
                   <span className="chip">{h.ratings.length} рейтингов</span>
-                  <span className={`chip small eval-${verdictClass(h.score)}`}>
+                  <span className="chip">Тема: {h.topic || "Общее"}</span>
+                  <span className="chip small eval-${verdictClass(h.score)}`}>
                     {Number(h.score).toFixed(2)}
                   </span>
                   <span className="time">⏱ {formatSecs(h.time)}</span>
@@ -381,7 +504,7 @@ export default function Home() {
                 {h.feedback && <p><b>Комментарий:</b> {h.feedback}</p>}
                 {h.canonical && (
                   <p>
-                    <b>Правильный ответ:</b> {h.canonical}
+                    <b>Правильный ответ (канон):</b> {h.canonical}
                     {h.matchedAs && h.matchedAs !== h.answer && (
                       <span className="muted"> (распознан как: {h.matchedAs})</span>
                     )}
@@ -537,7 +660,23 @@ export default function Home() {
         .row{ display:flex; align-items:center; gap:8px; }
         .time{ margin-left:auto; font-variant-numeric: tabular-nums; color:#cbd5e1; }
         .hint{ color:#cbd5e1; font-size:13px; margin: -4px 0 10px; }
-        @media (max-width: 560px) { .grid{ grid-template-columns:1fr; } }
+
+        /* summary */
+        .summaryGrid{
+          display:grid; grid-template-columns: repeat(2, minmax(0,1fr));
+          gap:10px; margin-top:8px;
+        }
+        .sumBox{ background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px; }
+        .sumLabel{ color:#cbd5e1; font-size:12px; }
+        .sumValue{ font-size:18px; font-weight:800; }
+
+        .topicList{ display:grid; gap:8px; margin-top:8px; }
+        .topicRow{ display:flex; align-items:center; gap:10px; }
+        .topicName{ flex:1; }
+        .chip.small{ padding:2px 8px; font-size:12px; }
+        .topicCount{ color:#cbd5e1; font-size:12px; }
+
+        @media (max-width: 560px) { .grid{ grid-template-columns:1fr; } .summaryGrid{ grid-template-columns:1fr; } }
       `}</style>
     </div>
   );
