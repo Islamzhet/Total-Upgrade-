@@ -1,89 +1,123 @@
 // /pages/api/evaluate.js
-import OpenAI from "openai";
+import canon from "../../data/canon-answers.json";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// лёгкая нормализация текста (без ИИ)
+function norm(s = "") {
+  return String(s)
+    .toLowerCase()
+    .replace(/[«»"()[],.!?:;]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-// Безопасный парсер JSON (на случай, если модель вернёт текст вокруг JSON)
-function safeParseJSON(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    try {
-      const start = text.indexOf("{");
-      const end = text.lastIndexOf("}");
-      if (start !== -1 && end !== -1 && end > start) {
-        return JSON.parse(text.slice(start, end + 1));
-      }
-    } catch {}
-  }
-  return null;
+// привести единицы
+function unifyUnits(s = "") {
+  return s
+    .replace(/фут(ы|ов)?/g, "футов")
+    .replace(/эшелон\s*/g, "f")
+    .trim();
+}
+
+// «f120» или «120» как эшелон → футы
+function echelonToFeet(text = "") {
+  const m = text.match(/\bf?(\d{2,3})\b/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (Number.isNaN(n)) return null;
+  return n * 100; // F120 = 120 * 100 = 12000 футов
+}
+
+// простейший выниматель чисел (1000, 12000)
+function extractInt(text = "") {
+  const n = parseInt(text.replace(/\s+/g, ""), 10);
+  return Number.isNaN(n) ? null : n;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
-
-  const { question, answer } = req.body || {};
-  if (!question || !answer) {
-    return res.status(400).json({ error: "question and answer are required" });
-  }
-
   try {
-    const systemPrompt = `
-Ты — экзаменатор авиадиспетчеров. Оцени ответ кратко и структурировано.
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method Not Allowed" });
+    }
 
-Правила:
-- Нормализуй числительные и единицы: "тысяча футов", "1000 футов", "A010" — эквивалент.
-- "A010" = 1000 футов, "A119" = 11900 футов, "F120" = 12000 футов, и т. д. (Fxxx — эшелон).
-- Игнорируй мелкие опечатки, если смысл однозначен.
-- Если вопрос предполагает несколько элементов ответа — оцени полноту.
-- Шкала score: 
-  1.0 — полностью верно и терминологически корректно; 
-  0.75 — верно, но упрощённо/неполно; 
-  0.5 — частично; 
-  0.25 — сильно неполно; 
-  0.0 — неверно/вне темы.
+    const { question = "", answer = "", topic = "Общее" } = req.body || {};
+    const topics = canon[topic] ? [topic] : Object.keys(canon);
 
-Верни СТРОГО JSON следующей формы (без пояснений вне JSON):
-{
-  "score": <число 0..1>,
-  "feedback": "<1-2 коротких предложения по-русски>",
-  "canonicalAnswer": "<канонический правильный ответ>",
-  "matchedAs": "<как интерпретирован ответ пользователя после нормализации>"
-}
-`.trim();
-
-    const userPrompt = `
-Вопрос: ${question}
-Ответ пользователя: ${answer}
-`.trim();
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // можно заменить на "gpt-4o"
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    });
-
-    const content = completion.choices?.[0]?.message?.content || "";
-    const parsed = safeParseJSON(content);
-
-    // Фолбэк, если по какой-то причине JSON не распарсился
-    let score = 0;
-    let feedback = "Не удалось получить структурированный ответ от модели.";
+    // ищем канонический ответ по вопросу в рамках темы (или всех тем)
     let canonicalAnswer = "";
-    let matchedAs = "";
+    for (const tp of topics) {
+      const qa = canon[tp]?.qa || [];
+      const hit = qa.find((x) => norm(x.q) === norm(question));
+      if (hit) {
+        canonicalAnswer = hit.a;
+        break;
+      }
+    }
+    // если не нашли — мягкий фолбэк: берём первый из темы
+    if (!canonicalAnswer) {
+      const qa = canon[topic]?.qa || canon["Общее"].qa || [];
+      canonicalAnswer = qa[0]?.a || "";
+    }
 
-    if (parsed && typeof parsed === "object") {
-      score = Math.max(0, Math.min(1, Number(parsed.score ?? 0)));
-      feedback = String(parsed.feedback ?? "").trim();
-      canonicalAnswer = String(parsed.canonicalAnswer ?? "").trim();
-      matchedAs = String(parsed.matchedAs ?? "").trim();
+    // нормализуем обе строки
+    const userRaw = String(answer || "").trim();
+    const userN = norm(unifyUnits(userRaw));
+    const canonN = norm(unifyUnits(canonicalAnswer));
+
+    // быстрые совпадения
+    let score = 0;
+    let feedback = "Ответ не соответствует канонической формулировке.";
+    let matchedAs = userRaw;
+
+    if (userN === canonN) {
+      score = 1.0;
+      feedback = "Точный канонический ответ.";
+    } else {
+      // числовая эквивалентность: «A010» ~ «1000 футов»; «F120» ~ «12000 футов»
+      const aFeet = echelonToFeet(userN);
+      const cFeet = echelonToFeet(canonN);
+      const aNum = extractInt(userN);
+      const cNum = extractInt(canonN);
+
+      const hasFeetU = /футов/.test(userN);
+      const hasFeetC = /футов/.test(canonN);
+
+      let numericMatch = false;
+
+      // если у канона есть число/футы — сравниваем по числам
+      if (hasFeetC) {
+        const uVal = aFeet || aNum;
+        const cVal = cFeet || cNum;
+        if (uVal != null && cVal != null) {
+          if (Math.abs(uVal - cVal) <= 50) numericMatch = true; // допуск
+        }
+      }
+
+      // синонимы
+      const synGroups = [
+        ["альтиметр", "высотомер", "altimeter"],
+        ["анемометр", "скоростемер", "airspeed", "питот"]
+      ];
+      let synonymHit = false;
+      for (const g of synGroups) {
+        const hasU = g.some((t) => userN.includes(t));
+        const hasC = g.some((t) => canonN.includes(t));
+        if (hasU && hasC) { synonymHit = true; break; }
+      }
+
+      if (numericMatch || synonymHit) {
+        score = numericMatch ? 1.0 : 0.75;
+        feedback = numericMatch
+          ? "Числовая эквивалентность засчитана как канон."
+          : "Смысл верный, допускается синоним/вариант термина.";
+      } else {
+        // частично по ключевым словам
+        const keys = canonN.split(" ").filter((w) => w.length > 4);
+        const hits = keys.filter((w) => userN.includes(w)).length;
+        if (hits >= 2) {
+          score = 0.5;
+          feedback = "Частично по смыслу, но неканонично и неполно.";
+        }
+      }
     }
 
     return res.status(200).json({
@@ -91,10 +125,9 @@ export default async function handler(req, res) {
       feedback,
       canonicalAnswer,
       matchedAs,
-      raw: content, // на всякий случай (можно убрать)
     });
-  } catch (err) {
-    console.error("OpenAI evaluate error:", err);
+  } catch (e) {
+    console.error("evaluate error:", e);
     return res.status(500).json({ error: "Evaluation failed" });
   }
 }
